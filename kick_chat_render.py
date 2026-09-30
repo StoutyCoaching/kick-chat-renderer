@@ -45,17 +45,34 @@ PALETTE = [
 ]
 
 REGULAR_FONTS = [
+    "C:/Windows/Fonts/tahoma.ttf",
     "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf", "/Library/Fonts/Arial.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 BOLD_FONTS = [
+    "C:/Windows/Fonts/tahomabd.ttf",
     "C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/Library/Fonts/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
+EMOJI_FONTS = [
+    "C:/Windows/Fonts/seguiemj.ttf",
+    "/System/Library/Fonts/Apple Color Emoji.ttc",
+    "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+    "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+]
+
+_PICT = ("\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF")
+_ONE = f"[{_PICT}]\\uFE0F?[\U0001F3FB-\U0001F3FF]?"
+# flags | keycaps | pictographs (with skin tones, variation selectors, ZWJ sequences)
+EMOJI_RE = re.compile(
+    "[\U0001F1E6-\U0001F1FF]{2}"
+    "|[0-9#*]\\uFE0F?\\u20E3"
+    f"|{_ONE}(?:\\u200D{_ONE})*"
+)
 
 
 # --------------------------------------------------------------------------- utils
@@ -154,6 +171,52 @@ class EmoteStore:
         return im
 
 
+class EmojiStore:
+    """Renders Unicode emoji as colour images using a separate emoji font."""
+
+    def __init__(self, path, height):
+        self.height = height
+        self.cache = {}
+        self.font = None
+        self.native = None
+        if path is None:
+            for c in EMOJI_FONTS:
+                if os.path.exists(c):
+                    path = c
+                    break
+        if not path:
+            return
+        try:  # vector/COLR fonts (Segoe UI Emoji) accept any size
+            self.font = ImageFont.truetype(path, height * 4)
+            self.native = height * 4
+        except Exception:  # noqa: BLE001
+            try:  # bitmap-only fonts (Noto Color Emoji) need their one strike size
+                self.font = ImageFont.truetype(path, 109)
+                self.native = 109
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! emoji font unusable: {e}", file=sys.stderr)
+
+    def get(self, cluster):
+        if self.font is None:
+            return None
+        if cluster in self.cache:
+            return self.cache[cluster]
+        im = None
+        try:
+            asc, desc = self.font.getmetrics()
+            w = max(1, int(self.font.getlength(cluster)) + 4)
+            cell = Image.new("RGBA", (w, asc + desc + 4), (0, 0, 0, 0))
+            ImageDraw.Draw(cell).text((2, 2), cluster, font=self.font, embedded_color=True)
+            if cell.getbbox() is None:
+                raise ValueError("blank glyph")
+            scale = self.height / cell.height
+            im = cell.resize((max(1, round(cell.width * scale)), self.height), Image.LANCZOS)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! emoji {cluster!r} not rendered: {e}", file=sys.stderr)
+        self.cache[cluster] = im
+        return im
+
+
 # --------------------------------------------------------------------------- message layout
 def draw_text(img, xy, text, font, color, outline):
     """Draw antialiased text onto a transparent RGBA image without dark fringes."""
@@ -189,6 +252,7 @@ class Layout:
         self.font = ImageFont.truetype(find_font(a.font, REGULAR_FONTS, "regular"), a.font_size)
         self.bold = ImageFont.truetype(find_font(a.font_bold, BOLD_FONTS, "bold"), a.font_size)
         self.emote_size = round(a.font_size * 1.5)
+        self.emoji = EmojiStore(a.emoji_font, round(a.font_size * 1.3))
         self.emotes = EmoteStore(a.emote_cache, self.emote_size, self.font, a.offline)
         self.line_h = round(a.font_size * 1.45)
         self.space = self.font.getlength(" ")
@@ -196,6 +260,23 @@ class Layout:
         if a.user_colors:
             with open(a.user_colors, encoding="utf-8") as f:
                 self.colors = json.load(f)
+
+    def word_tokens(self, word):
+        out, pos = [], 0
+
+        def text(sv):
+            return {"k": "text", "s": sv, "f": self.font, "c": (255, 255, 255), "gap": 0}
+
+        for mt in EMOJI_RE.finditer(word):
+            if mt.start() > pos:
+                out.append(text(word[pos:mt.start()]))
+            img = self.emoji.get(mt.group())
+            out.append({"k": "emoji", "img": img, "gap": 0} if img else text(mt.group()))
+            pos = mt.end()
+        if pos < len(word):
+            out.append(text(word[pos:]))
+        out[-1]["gap"] = self.space
+        return out
 
     def tokens(self, m):
         name_col = user_color(m["username"], self.colors)
@@ -207,7 +288,7 @@ class Layout:
         # split() with 2 groups -> [text, id, name, text, id, name, ..., text]
         for i in range(0, len(parts), 3):
             for word in parts[i].split():
-                toks.append({"k": "text", "s": word, "f": self.font, "c": (255, 255, 255), "gap": self.space})
+                toks.extend(self.word_tokens(word))
             if i + 2 < len(parts):
                 toks.append({"k": "emote", "id": parts[i + 1], "name": parts[i + 2], "gap": self.space / 2})
         return toks
@@ -219,8 +300,9 @@ class Layout:
         lines = [[]]
         x = 0.0
         for t in self.tokens(m):
-            if t["k"] == "emote":
-                t["img"] = self.emotes.get(t["id"], t["name"])
+            if t["k"] in ("emote", "emoji"):
+                if t["k"] == "emote":
+                    t["img"] = self.emotes.get(t["id"], t["name"])
                 pieces = [t]
                 t["w"] = t["img"].width
             else:
@@ -259,7 +341,7 @@ class Layout:
             cy = y + lh / 2
             for p in ln:
                 px = a.margin + pad + p["x"]
-                if p["k"] == "emote":
+                if p["k"] in ("emote", "emoji"):
                     img.alpha_composite(p["img"], dest=(int(px), int(cy - p["img"].height / 2)))
                 else:
                     draw_text(img, (px, cy), p["s"], p["f"], p["c"], a.outline)
@@ -412,6 +494,7 @@ def build_parser():
     ap.add_argument("--bg-opacity", type=float, default=0.45, help="per-message dark box opacity 0-1 (0 = none)")
     ap.add_argument("--font", help="regular .ttf path")
     ap.add_argument("--font-bold", help="bold .ttf path")
+    ap.add_argument("--emoji-font", help="colour emoji font path (default: Segoe UI Emoji on Windows)")
     ap.add_argument("--font-size", type=int, default=22)
     ap.add_argument("--outline", type=int, default=2, help="text outline px (0 = off)")
     ap.add_argument("--margin", type=int, default=10)
