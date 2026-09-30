@@ -1,0 +1,21 @@
+# Builds KickChatRenderer.exe on GitHub's Windows runners (no local Python needed).
+# Push this repo to GitHub, open Actions -> "Build exe" -> Run workflow, then download the artifact.
+name: Build exe
+on: [workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install pillow pyinstaller
+      - name: Get ffmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          Copy-Item (Get-ChildItem ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName ffmpeg.exe
+      - run: python -m PyInstaller --noconfirm --onefile --windowed --name KickChatRenderer --add-binary "ffmpeg.exe;." kick_chat_render.py
+      - uses: actions/upload-artifact@v4
+        with: { name: KickChatRenderer, path: dist/KickChatRenderer.exe }
