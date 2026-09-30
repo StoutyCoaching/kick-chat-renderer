@@ -553,14 +553,14 @@ def gui():
 
     root = tk.Tk()
     root.title("Kick Chat Renderer")
-    root.geometry("640x560")
+    root.geometry("660x680")
     q = queue.Queue()
     cancel = threading.Event()
     busy = {"on": False}
 
     v = {k: tk.StringVar(value=val) for k, val in dict(
         input="", output="", fmt="qtrle", start="", end="", width="420", height="1080",
-        opacity="0.45", hide="", green="0").items()}
+        opacity="0.45", hide="", green="0", font="", bold="", fsize="22").items()}
 
     frm = ttk.Frame(root, padding=12)
     frm.pack(fill="both", expand=True)
@@ -608,16 +608,31 @@ def gui():
     ttk.Entry(sz, textvariable=v["opacity"], width=6).pack(side="left")
     row(7, "Size (px)", sz)
     row(8, "Hide users (spaces)", ttk.Entry(frm, textvariable=v["hide"]))
+    row(9, "Font size", ttk.Entry(frm, textvariable=v["fsize"], width=7))
+
+    def pick_font(key):
+        p = filedialog.askopenfilename(title="Choose a font file", initialdir="C:/Windows/Fonts",
+                                       filetypes=[("Fonts", "*.ttf *.otf *.ttc"), ("All", "*.*")])
+        if p:
+            v[key].set(p)
+
+    for r, (label, key) in enumerate([("Font (regular)", "font"), ("Font (bold names)", "bold")], start=10):
+        ff = ttk.Frame(frm); ff.columnconfigure(0, weight=1)
+        ttk.Entry(ff, textvariable=v[key]).grid(row=0, column=0, sticky="ew")
+        ttk.Button(ff, text="Browse...", command=lambda k=key: pick_font(k)).grid(row=0, column=1, padx=(6, 0))
+        row(r, label, ff)
+    ttk.Label(frm, text="Leave fonts blank for the default (Segoe UI). Pick the bold version of the same "
+                        "family for usernames.", foreground="#666").grid(row=12, column=1, sticky="w", padx=8)
     ttk.Checkbutton(frm, text="Solid green background instead of transparent (fallback)",
-                    variable=v["green"], onvalue="1", offvalue="0").grid(row=9, column=1, sticky="w", padx=8)
+                    variable=v["green"], onvalue="1", offvalue="0").grid(row=13, column=1, sticky="w", padx=8)
 
     bar = ttk.Progressbar(frm, maximum=100)
-    bar.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+    bar.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(10, 4))
     btns = ttk.Frame(frm)
-    btns.grid(row=11, column=0, columnspan=2, sticky="ew")
+    btns.grid(row=15, column=0, columnspan=2, sticky="ew")
     logbox = tk.Text(frm, height=9, state="disabled", wrap="word")
-    logbox.grid(row=12, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
-    frm.rowconfigure(12, weight=1)
+    logbox.grid(row=16, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+    frm.rowconfigure(16, weight=1)
 
     def log(s):
         logbox.config(state="normal")
@@ -639,6 +654,12 @@ def gui():
             x += ["--hide-users"] + v["hide"].get().split()
         if v["green"].get() == "1":
             x += ["--bg", "00ff00"]
+        if v["fsize"].get().strip():
+            x += ["--font-size", v["fsize"].get().strip()]
+        if v["font"].get().strip():
+            x += ["--font", v["font"].get().strip()]
+        if v["bold"].get().strip():
+            x += ["--font-bold", v["bold"].get().strip()]
         if preview:
             x += ["--preview", preview]
         return build_parser().parse_args(x)
