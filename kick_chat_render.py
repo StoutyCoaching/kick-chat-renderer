@@ -741,7 +741,7 @@ def gui():
         ttk.Entry(ff, textvariable=v[key]).grid(row=0, column=0, sticky="ew")
         ttk.Button(ff, text="Browse...", command=lambda k=key: pick_font(k)).grid(row=0, column=1, padx=(6, 0))
         row(r, label, ff)
-    ttk.Label(frm, text="Leave fonts blank for the default (Segoe UI). Pick the bold version of the same "
+    ttk.Label(frm, text="Leave fonts blank for the default (Tahoma). Pick the bold version of the same "
                         "family for usernames.", foreground="#666").grid(row=13, column=1, sticky="w", padx=8)
     ttk.Checkbutton(frm, text="Solid green background instead of transparent (fallback)",
                     variable=v["green"], onvalue="1", offvalue="0").grid(row=14, column=1, sticky="w", padx=8)
