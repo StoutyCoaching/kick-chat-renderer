@@ -22,7 +22,7 @@ jobs:
           Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ffmpeg.zip
           Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
           Copy-Item (Get-ChildItem ffmpeg_tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName ffmpeg.exe
-      - run: python -m PyInstaller --noconfirm --onefile --windowed --name KickChatRenderer --add-binary "ffmpeg.exe;." kick_chat_render.py
+      - run: python -m PyInstaller --noconfirm --onefile --windowed --name KickChatRenderer --icon icon.ico --add-data "icon.ico;." --add-binary "ffmpeg.exe;." kick_chat_render.py
       - uses: actions/upload-artifact@v4
         with: { name: KickChatRenderer, path: dist/KickChatRenderer.exe }
       - name: Publish release
