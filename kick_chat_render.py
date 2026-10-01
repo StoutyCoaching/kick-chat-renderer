@@ -388,7 +388,8 @@ class FrameMaker:
             g = Image.new("L", (a.width, a.height), 255)
             px = g.load()
             for yy in range(min(a.top_fade, a.height)):
-                v = int(255 * yy / a.top_fade)
+                lo = max(0.0, min(1.0, a.top_fade_min))
+                v = int(255 * (lo + (1 - lo) * yy / a.top_fade))
                 for xx in range(a.width):
                     px[xx, yy] = v
             self.fade = g
@@ -504,6 +505,8 @@ def build_parser():
     ap.add_argument("--anim", type=float, default=0.3, help="new-message animation seconds (0 = instant)")
     ap.add_argument("--slide", type=int, default=16, help="px a new message slides up from")
     ap.add_argument("--top-fade", type=int, default=140, help="px fade-out at top edge (0 = off)")
+    ap.add_argument("--top-fade-min", type=float, default=0.0,
+                    help="opacity (0-1) of the oldest message at the very top edge; 0 = fully faded out")
     ap.add_argument("--quality", type=int, default=11, help="ProRes qscale (lower = bigger/better, 4-16)")
     ap.add_argument("--hide-users", nargs="*", default=[], help="usernames to leave out (e.g. bots)")
     ap.add_argument("--user-colors", help="JSON file {username: '#rrggbb'} to override name colours")
@@ -628,6 +631,14 @@ def cli(argv):
 
 
 # --------------------------------------------------------------------------- GUI
+SETTINGS_PATH = os.path.join(os.path.dirname(DEFAULT_CACHE), "settings.json")
+
+
+def resource_path(name):
+    base = getattr(sys, "_MEIPASS", None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, name)
+
+
 def gui():
     import queue
     import threading
@@ -636,14 +647,34 @@ def gui():
 
     root = tk.Tk()
     root.title("Kick Chat Renderer")
-    root.geometry("660x680")
+    root.geometry("660x760")
+    try:  # window + taskbar icon (the exe's file icon is set at build time with --icon)
+        root.iconbitmap(resource_path("icon.ico"))
+    except Exception:  # noqa: BLE001
+        pass
     q = queue.Queue()
     cancel = threading.Event()
     busy = {"on": False}
 
     v = {k: tk.StringVar(value=val) for k, val in dict(
         input="", output="", fmt="qtrle", start="", end="", width="420", height="1080",
-        opacity="0.45", hide="", green="0", font="", bold="", fsize="22").items()}
+        opacity="0.45", hide="", green="0", font="", bold="", fsize="22",
+        fade="140", fmin="0").items()}
+    try:  # restore last-used settings
+        with open(SETTINGS_PATH, encoding="utf-8") as fh:
+            for k, val in json.load(fh).items():
+                if k in v and isinstance(val, str):
+                    v[k].set(val)
+    except Exception:  # noqa: BLE001
+        pass
+
+    def save_settings():
+        try:
+            os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as fh:
+                json.dump({k: var.get() for k, var in v.items()}, fh, indent=1)
+        except Exception:  # noqa: BLE001
+            pass
 
     frm = ttk.Frame(root, padding=12)
     frm.pack(fill="both", expand=True)
@@ -692,6 +723,12 @@ def gui():
     row(7, "Size (px)", sz)
     row(8, "Hide users (spaces)", ttk.Entry(frm, textvariable=v["hide"]))
     row(9, "Font size", ttk.Entry(frm, textvariable=v["fsize"], width=7))
+    fd = ttk.Frame(frm)
+    ttk.Entry(fd, textvariable=v["fade"], width=7).pack(side="left")
+    ttk.Label(fd, text="px tall   Oldest-message opacity 0-1 ").pack(side="left")
+    ttk.Entry(fd, textvariable=v["fmin"], width=6).pack(side="left")
+    row(12, "Top fade", fd)
+    ttk.Label(fd, text="  (0 = fully faded out, 1 = no fade)", foreground="#666").pack(side="left")
 
     def pick_font(key):
         p = filedialog.askopenfilename(title="Choose a font file", initialdir="C:/Windows/Fonts",
@@ -705,17 +742,17 @@ def gui():
         ttk.Button(ff, text="Browse...", command=lambda k=key: pick_font(k)).grid(row=0, column=1, padx=(6, 0))
         row(r, label, ff)
     ttk.Label(frm, text="Leave fonts blank for the default (Segoe UI). Pick the bold version of the same "
-                        "family for usernames.", foreground="#666").grid(row=12, column=1, sticky="w", padx=8)
+                        "family for usernames.", foreground="#666").grid(row=13, column=1, sticky="w", padx=8)
     ttk.Checkbutton(frm, text="Solid green background instead of transparent (fallback)",
-                    variable=v["green"], onvalue="1", offvalue="0").grid(row=13, column=1, sticky="w", padx=8)
+                    variable=v["green"], onvalue="1", offvalue="0").grid(row=14, column=1, sticky="w", padx=8)
 
     bar = ttk.Progressbar(frm, maximum=100)
-    bar.grid(row=14, column=0, columnspan=2, sticky="ew", pady=(10, 4))
+    bar.grid(row=15, column=0, columnspan=2, sticky="ew", pady=(10, 4))
     btns = ttk.Frame(frm)
-    btns.grid(row=15, column=0, columnspan=2, sticky="ew")
+    btns.grid(row=16, column=0, columnspan=2, sticky="ew")
     logbox = tk.Text(frm, height=9, state="disabled", wrap="word")
-    logbox.grid(row=16, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
-    frm.rowconfigure(16, weight=1)
+    logbox.grid(row=17, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+    frm.rowconfigure(17, weight=1)
 
     def log(s):
         logbox.config(state="normal")
@@ -737,6 +774,10 @@ def gui():
             x += ["--hide-users"] + v["hide"].get().split()
         if v["green"].get() == "1":
             x += ["--bg", "00ff00"]
+        if v["fade"].get().strip():
+            x += ["--top-fade", v["fade"].get().strip()]
+        if v["fmin"].get().strip():
+            x += ["--top-fade-min", v["fmin"].get().strip()]
         if v["fsize"].get().strip():
             x += ["--font-size", v["fsize"].get().strip()]
         if v["font"].get().strip():
@@ -761,10 +802,13 @@ def gui():
     def start(preview=None):
         if busy["on"]:
             return
+        save_settings()
         try:
             a = argv(preview)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("Kick Chat Renderer", str(e))
+        except (Exception, SystemExit) as e:  # noqa: BLE001  (argparse exits on bad numbers)
+            messagebox.showerror("Kick Chat Renderer",
+                                 str(e) if isinstance(e, Exception) and str(e) else
+                                 "One of the numeric fields isn't a valid number.")
             return
         cancel.clear()
         busy["on"] = True
@@ -799,6 +843,11 @@ def gui():
             pass
         root.after(100, poll)
 
+    def on_close():
+        save_settings()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
     poll()
     root.mainloop()
 
